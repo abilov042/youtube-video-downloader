@@ -118,13 +118,13 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Create a new YouTube client
 	ctx := context.Background()
-	_, err := getClient(ctx)
+	httpClient, err := getClient(ctx)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error getting OAuth2 client: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	youtubeClient := youtube.Client{}
+	youtubeClient := youtube.Client{HTTPClient: httpClient}
 
 	// Get the video information
 	video, err := youtubeClient.GetVideo(videoURL)
@@ -194,6 +194,6 @@ func main() {
 	http.HandleFunc("/oauth2callback", oauth2CallbackHandler)
 	http.HandleFunc("/download", downloadHandler)
 
-	fmt.Println("Server is running on http://localhost:8080")
+	fmt.Println("Server is running on http://localhost:8000")
 	log.Fatal(http.ListenAndServe(":8000", nil))
 }
