@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,9 +18,9 @@ import (
 
 // OAuth2 konfigürasyonu
 const (
-	clientID     = ""
-	clientSecret = ""
-	redirectURL  = ""
+	clientID     = "" // Buraya kendi clientID'nizi ekleyin
+	clientSecret = "" // Buraya kendi clientSecret'inizi ekleyin
+	redirectURL  = "" // Buraya kendi redirectURL'nizi ekleyin
 )
 
 // Token dosyasının adı
@@ -120,21 +121,18 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create YouTube service
 	svc, err := youtube.New(client)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error creating YouTube service: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Extract video ID from URL
 	videoID := extractVideoID(videoURL)
 	if videoID == "" {
 		http.Error(w, "Invalid video URL", http.StatusBadRequest)
 		return
 	}
 
-	// Fetch video details
 	call := svc.Videos.List([]string{"snippet", "contentDetails", "statistics"}).Id(videoID)
 	response, err := call.Do()
 	if err != nil {
@@ -152,7 +150,6 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 	fileName := fmt.Sprintf("%s.mp4", strings.ReplaceAll(videoTitle, " ", "_"))
 	downloadPath := filepath.Join("downloads", fileName)
 
-	// Open a file to save the video
 	file, err := os.Create(downloadPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error creating file: %v", err), http.StatusInternalServerError)
@@ -160,7 +157,6 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Download the video (this example assumes you have a method to do this)
 	resp, err := downloadVideo(videoID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error downloading video: %v", err), http.StatusInternalServerError)
@@ -177,22 +173,32 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, downloadPath)
 }
 
-// Extract video ID from URL
-func extractVideoID(url string) string {
-	// This function extracts the video ID from the YouTube URL
-	parts := strings.Split(url, "v=")
-	if len(parts) > 1 {
-		idParts := strings.Split(parts[1], "&")
-		return idParts[0]
+func extractVideoID(videoURL string) string {
+	u, err := url.Parse(videoURL)
+	if err != nil {
+		return ""
 	}
+
+	if u.Host == "youtu.be" {
+		segments := strings.Split(u.Path, "/")
+		if len(segments) > 1 {
+			return segments[1]
+		}
+	}
+
+	if u.Host == "www.youtube.com" || u.Host == "youtube.com" {
+		queryParams := u.Query()
+		if videoID := queryParams.Get("v"); videoID != "" {
+			return videoID
+		}
+	}
+
 	return ""
 }
 
-// Download video based on video ID
 func downloadVideo(videoID string) (io.ReadCloser, error) {
-	// This function should implement the logic to download the video using the video ID
-	// Replace this placeholder with actual video downloading logic
-	return nil, nil
+	// Burada video indirme kodunuzu yazmalısınız
+	return nil, fmt.Errorf("video download not implemented")
 }
 
 func main() {
