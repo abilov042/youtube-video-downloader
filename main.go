@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/kkdai/youtube/v2"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-	"google.golang.org/api/youtube/v3"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,9 +17,9 @@ import (
 
 // OAuth2 konfigürasyonu
 const (
-	clientID     = "" // Buraya kendi clientID'nizi ekleyin
-	clientSecret = "" // Buraya kendi clientSecret'inizi ekleyin
-	redirectURL  = "" // Buraya kendi redirectURL'nizi ekleyin
+	clientID     = "YOUR_CLIENT_ID"
+	clientSecret = "YOUR_CLIENT_SECRET"
+	redirectURL  = "http://localhost:8080/oauth2callback"
 )
 
 // Token dosyasının adı
@@ -97,59 +96,63 @@ func oauth2CallbackHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func downloadHandler(w http.ResponseWriter, r *http.Request) {
+	// Only accept POST requests
 	if r.Method != http.MethodPost {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// Parse the JSON body
 	var reqBody RequestBody
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 		return
 	}
 
+	// Extract the video URL from the parsed JSON
 	videoURL := reqBody.URL
 	if videoURL == "" {
 		http.Error(w, "Please provide a video URL", http.StatusBadRequest)
 		return
 	}
 
+	// Create a new YouTube client
 	ctx := context.Background()
-	client, err := getClient(ctx)
+	_, err := getClient(ctx)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error getting OAuth2 client: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	svc, err := youtube.New(client)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Error creating YouTube service: %v", err), http.StatusInternalServerError)
-		return
-	}
+	youtubeClient := youtube.Client{}
 
-	videoID := extractVideoID(videoURL)
-	if videoID == "" {
-		http.Error(w, "Invalid video URL", http.StatusBadRequest)
-		return
-	}
-
-	call := svc.Videos.List([]string{"snippet", "contentDetails", "statistics"}).Id(videoID)
-	response, err := call.Do()
+	// Get the video information
+	video, err := youtubeClient.GetVideo(videoURL)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error getting video info: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	if len(response.Items) == 0 {
-		http.Error(w, "Video not found", http.StatusNotFound)
+	// Select the format with both video and audio
+	formats := video.Formats.WithAudioChannels()
+	if len(formats) == 0 {
+		http.Error(w, "No suitable formats with audio found", http.StatusInternalServerError)
 		return
 	}
 
-	video := response.Items[0]
-	videoTitle := video.Snippet.Title
-	fileName := fmt.Sprintf("%s.mp4", strings.ReplaceAll(videoTitle, " ", "_"))
+	// Select the best available format with both video and audio
+	format := formats[0]
+	for _, f := range formats {
+		if f.Height > format.Height {
+			format = f
+		}
+	}
+
+	// Define the download path
+	fileName := fmt.Sprintf("%s.mp4", strings.ReplaceAll(video.Title, " ", "_"))
 	downloadPath := filepath.Join("downloads", fileName)
 
+	// Open a file to save the video
 	file, err := os.Create(downloadPath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error creating file: %v", err), http.StatusInternalServerError)
@@ -157,51 +160,29 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	resp, err := downloadVideo(videoID)
+	// Download the video with audio
+	resp, _, err := youtubeClient.GetStream(video, &format)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error downloading video: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer resp.Close()
 
+	// Save the video to the file
 	_, err = io.Copy(file, resp)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error saving video: %v", err), http.StatusInternalServerError)
 		return
 	}
 
+	// Respond with the downloaded video file
+	w.Header().Set("Content-Disposition", "attachment; filename="+fileName)
+	w.Header().Set("Content-Type", "video/mp4")
 	http.ServeFile(w, r, downloadPath)
 }
 
-func extractVideoID(videoURL string) string {
-	u, err := url.Parse(videoURL)
-	if err != nil {
-		return ""
-	}
-
-	if u.Host == "youtu.be" {
-		segments := strings.Split(u.Path, "/")
-		if len(segments) > 1 {
-			return segments[1]
-		}
-	}
-
-	if u.Host == "www.youtube.com" || u.Host == "youtube.com" {
-		queryParams := u.Query()
-		if videoID := queryParams.Get("v"); videoID != "" {
-			return videoID
-		}
-	}
-
-	return ""
-}
-
-func downloadVideo(videoID string) (io.ReadCloser, error) {
-	// Burada video indirme kodunuzu yazmalısınız
-	return nil, fmt.Errorf("video download not implemented")
-}
-
 func main() {
+	// Create the downloads directory if it doesn't exist
 	if _, err := os.Stat("downloads"); os.IsNotExist(err) {
 		err := os.Mkdir("downloads", 0755)
 		if err != nil {
@@ -213,6 +194,6 @@ func main() {
 	http.HandleFunc("/oauth2callback", oauth2CallbackHandler)
 	http.HandleFunc("/download", downloadHandler)
 
-	fmt.Println("Server is running on http://localhost:8000")
+	fmt.Println("Server is running on http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8000", nil))
 }
